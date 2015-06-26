@@ -21,30 +21,39 @@ module Net; module SFTP; module Protocol
       @request_id_counter = -1
     end
 
+    def load_extensions(extensions)
+      @extensions = extensions.map { |ext| { ext.fetch(:method_name) => ext } }.reduce(&:merge)
+    end
+
     # Attept to parse the given packet. If the packet is of an unsupported
     # type, an exception will be raised. Returns the parsed data as a hash
     # (the keys in the hash are packet-type specific).
-    def parse(packet)
+    def parse(request, packet)
       case packet.type
       when FXP_STATUS then parse_status_packet(packet)
       when FXP_HANDLE then parse_handle_packet(packet)
       when FXP_DATA   then parse_data_packet(packet)
       when FXP_NAME   then parse_name_packet(packet)
       when FXP_ATTRS  then parse_attrs_packet(packet)
+      when FXP_EXTENDED_REPLY then parse_extended_packet(request.type, packet)
       else raise NotImplementedError, "unknown packet type: #{packet.type}"
       end
     end
 
     private
 
-      # Send a new packet of the given type, and with the given data arguments.
-      # A new request identifier will be allocated to this request, and will
-      # be returned.
-      def send_request(type, *args)
-        @request_id_counter += 1
-        session.send_packet(type, :long, @request_id_counter, *args)
-        return @request_id_counter
-      end
+    def parse_extended_packet(type, packet)
+      @extensions.fetch(type).fetch(:protocol_parse_extension_packet).call(packet)
+    end
+
+    # Send a new packet of the given type, and with the given data arguments.
+    # A new request identifier will be allocated to this request, and will
+    # be returned.
+    def send_request(type, *args)
+      @request_id_counter += 1
+      session.send_packet(type, :long, @request_id_counter, *args)
+      return @request_id_counter
+    end
   end
 
 end; end; end

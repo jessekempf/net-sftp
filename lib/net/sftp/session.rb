@@ -76,12 +76,61 @@ module Net; module SFTP
     #   sftp = Net::SFTP::Session.new(ssh)
     #   sftp.loop { sftp.opening? }
     def initialize(session, &block)
+      require 'ap'
+
       @session    = session
       @input      = Net::SSH::Buffer.new
       self.logger = session.logger
       @state      = :closed
 
       connect(&block)
+
+      @client_extensions = [
+        {
+          name: 'posix-rename@openssh.com',
+          version: 1,
+          method_name: :posix_rename,
+          protocol_parse_extension_packet: lambda do |packet|
+          end,
+          protocol_send_extension_request: lambda do |oldpath, newpath|
+            send_request(FXP_EXTENDED, :string, 'posix-rename@openssh.com', :string, oldpath, :string, newpath)
+          end,
+        },
+        {
+          name: 'checksum@opower.com',
+          version: 1,
+          method_name: :server_checksum,
+          default_property: :checksum,
+          protocol_parse_extension_packet: lambda do |packet|
+            { checksum: packet.read_string }
+          end,
+          protocol_send_extension_request: lambda do |path|
+            send_request(FXP_EXTENDED, :string, 'checksum@opower.com', :string, 'sha256', :string, path)
+          end,
+        }
+      ]
+    end
+
+    private
+    def load_extensions(server_extensions)
+      ap server_extensions
+      relevant_extensions = @client_extensions.select do |ext|
+        server_extensions[ext.fetch(:name)].to_i == ext.fetch(:version)
+      end
+
+      @protocol.load_extensions(relevant_extensions)
+
+      relevant_extensions.each do |ext|
+        method_name = ext.fetch(:method_name)
+
+        @protocol.instance_eval do
+          define_singleton_method(method_name, ext.fetch(:protocol_send_extension_request))
+        end
+
+        define_singleton_method(method_name) do |*args, &callback|
+          wait_for(request(method_name, *args, &callback), ext[:default_property])
+        end
+      end
     end
 
     public # high-level SFTP operations
@@ -933,6 +982,9 @@ module Net; module SFTP
         end
 
         @protocol = Protocol.load(self, negotiated_version)
+
+        load_extensions(extensions)
+
         @pending_requests = {}
 
         @state = :open

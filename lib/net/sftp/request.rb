@@ -80,7 +80,7 @@ module Net; module SFTP
       # object to encapsulate it. If a #callback has been provided for this
       # request, the callback is invoked with the new response object.
       def respond_to(packet) #:nodoc:
-        data = session.protocol.parse(packet)
+        data = session.protocol.parse(self,packet)
         data[:type] = packet.type
         @response = Response.new(self, data)
 
