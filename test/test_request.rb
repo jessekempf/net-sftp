@@ -30,8 +30,11 @@ class RequestTest < Net::SFTP::TestCase
   def test_respond_to_should_set_response_property
     packet = stub("packet", :type => 1)
     session = stub("session", :protocol => mock("protocol"))
-    session.protocol.expects(:parse).with(packet).returns({})
+
     request = Net::SFTP::Request.new(session, :open, 1)
+
+    session.protocol.expects(:parse).with(request, packet).returns({})
+
     assert_nil request.response
     request.respond_to(packet)
     assert_instance_of Net::SFTP::Response, request.response
@@ -40,13 +43,14 @@ class RequestTest < Net::SFTP::TestCase
   def test_respond_to_with_callback_should_invoke_callback
     packet = stub("packet", :type => 1)
     session = stub("session", :protocol => mock("protocol"))
-    session.protocol.expects(:parse).with(packet).returns({})
 
     called = false
     request = Net::SFTP::Request.new(session, :open, 1) do |response|
       called = true
       assert_equal request.response, response
     end
+
+    session.protocol.expects(:parse).with(request, packet).returns({})
 
     request.respond_to(packet)
     assert called
