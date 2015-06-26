@@ -92,6 +92,9 @@ Gem::Specification.new do |s|
       s.add_runtime_dependency(%q<net-ssh>, [">= 2.6.5"])
       s.add_development_dependency(%q<test-unit>, [">= 0"])
       s.add_development_dependency(%q<mocha>, [">= 0"])
+      s.add_development_dependency('rake')
+      s.add_development_dependency('jeweler')
+      s.add_development_dependency('awesome_print')
     else
       s.add_dependency(%q<net-ssh>, [">= 2.6.5"])
       s.add_dependency(%q<test-unit>, [">= 0"])
