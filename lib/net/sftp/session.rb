@@ -68,6 +68,81 @@ module Net; module SFTP
     # the server has not yet responded to will be represented here.
     attr_reader :pending_requests
 
+    class ProtocolExtension
+      include Net::SFTP::Constants::PacketTypes
+      attr_reader :extension_name
+      attr_reader :base_method_name
+      attr_reader :version
+      attr_reader :default_response_property
+
+      def initialize(extension_name, base_method_name, version, default_response_property = nil)
+        @extension_name = extension_name
+        @base_method_name = base_method_name
+        @version = version
+        @default_response_property = default_response_property
+      end
+
+      def supports?(extension_data)
+        extension_data.to_i == version
+      end
+
+      # For use of Net::SFTP::Protocol::Base during Protocol initialization only.
+      #
+      # This method lets the caller provide a block which will be used whenever this ProtocolExtension
+      # wants to send an SFTP request packet.
+      def how_to_send_request(&block)
+        @send_request = block
+      end
+
+      def extended_request(*_)
+        raise NotImplementedError, "#extended_request must be overridden by an extension implementation."
+      end
+
+      def response_parser(*_)
+        raise NotImplementedError, "#response_parser must be overridden by an extension implementation."
+      end
+
+      def send_extended_request(*args)
+         @send_request.call(FXP_EXTENDED, :string, @extension_name, *args)
+      end
+
+      def method_name
+        @base_method_name.to_sym
+      end
+
+      def sync_method_name
+        (@base_method_name.to_s + '!').to_sym
+      end
+    end
+
+    class PosixRename < ProtocolExtension
+      def initialize
+        super('posix-rename@openssh.com', 'posix_rename', 1)
+      end
+
+      def extended_request(oldpath, newpath)
+        send_extended_request(:string, oldpath, :string, newpath)
+      end
+
+      def response_parser
+        raise RuntimeError, "#{@extension_name} does not define a special response type; this should never be reached"
+      end
+    end
+
+    class ChecksumAtOpowerDotCom < ProtocolExtension
+      def initialize
+        super('checksum@opower.com', 'server_checksum', 1, :checksum)
+      end
+
+      def extended_request(path)
+        send_extended_request(:string, 'sha256', :string, path)
+      end
+
+      def response_parser(packet)
+        { checksum: packet.read_string }
+      end
+    end
+
     # Creates a new Net::SFTP instance atop the given Net::SSH connection.
     # This will return immediately, before the SFTP connection has been properly
     # initialized. Once the connection is ready, the given block will be called.
@@ -76,8 +151,6 @@ module Net; module SFTP
     #   sftp = Net::SFTP::Session.new(ssh)
     #   sftp.loop { sftp.opening? }
     def initialize(session, &block)
-      require 'ap'
-
       @session    = session
       @input      = Net::SSH::Buffer.new
       self.logger = session.logger
@@ -85,50 +158,24 @@ module Net; module SFTP
 
       connect(&block)
 
-      @client_extensions = [
-        {
-          name: 'posix-rename@openssh.com',
-          version: 1,
-          method_name: :posix_rename,
-          protocol_parse_extension_packet: lambda do |packet|
-          end,
-          protocol_send_extension_request: lambda do |oldpath, newpath|
-            send_request(FXP_EXTENDED, :string, 'posix-rename@openssh.com', :string, oldpath, :string, newpath)
-          end,
-        },
-        {
-          name: 'checksum@opower.com',
-          version: 1,
-          method_name: :server_checksum,
-          default_property: :checksum,
-          protocol_parse_extension_packet: lambda do |packet|
-            { checksum: packet.read_string }
-          end,
-          protocol_send_extension_request: lambda do |path|
-            send_request(FXP_EXTENDED, :string, 'checksum@opower.com', :string, 'sha256', :string, path)
-          end,
-        }
-      ]
+      @client_extensions = [PosixRename, ChecksumAtOpowerDotCom].map(&:new)
     end
 
     private
     def load_extensions(server_extensions)
-      ap server_extensions
       relevant_extensions = @client_extensions.select do |ext|
-        server_extensions[ext.fetch(:name)].to_i == ext.fetch(:version)
+        ext.supports?(server_extensions[ext.extension_name])
       end
 
       @protocol.load_extensions(relevant_extensions)
 
       relevant_extensions.each do |ext|
-        method_name = ext.fetch(:method_name)
-
-        @protocol.instance_eval do
-          define_singleton_method(method_name, ext.fetch(:protocol_send_extension_request))
+        define_singleton_method(ext.method_name) do |*args, &callback|
+          request(ext.method_name, *args, &callback)
         end
 
-        define_singleton_method(method_name) do |*args, &callback|
-          wait_for(request(method_name, *args, &callback), ext[:default_property])
+        define_singleton_method(ext.sync_method_name) do |*args, &callback|
+          wait_for(send(ext.method_name, *args, &callback), ext.default_response_property)
         end
       end
     end

@@ -32,7 +32,23 @@ module Net; module SFTP; module Protocol; module V03
 
     # Support for SFTP v3+ vendor extensioning.
     def load_extensions(extensions)
-      @extensions = extensions.map { |ext| { ext.fetch(:method_name) => ext } }.reduce(&:merge)
+      @extensions_by_name = extensions.map { |ext| { ext.method_name => ext } }.reduce(&:merge)
+
+      extensions.each do |extension|
+
+        # Give the extension a way of sending raw packets through us
+        extension.how_to_send_request do |*args|
+          send(:send_request, *args)
+        end
+
+        # Define a method on this instance for making this kind of request. If we
+        # have an extension for contrivance@example.com with a base method name of
+        # 'contrivance', then we create a :contrivance method on our Protocol
+        # instance.
+        define_singleton_method(extension.method_name) do |*args|
+          extension.extended_request(*args)
+        end
+      end
     end
 
     def parse(request, packet)
@@ -46,7 +62,7 @@ module Net; module SFTP; module Protocol; module V03
     private
 
     def parse_extended_packet(type, packet)
-      @extensions.fetch(type).fetch(:protocol_parse_extension_packet).call(packet)
+      @extensions_by_name.fetch(type).send(:response_parser, packet)
     end
   end
 
