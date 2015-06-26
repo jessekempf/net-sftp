@@ -21,9 +21,9 @@ module Net; module SFTP; module Protocol
       @request_id_counter = -1
     end
 
-    def load_extensions(extensions)
-      @extensions = extensions.map { |ext| { ext.fetch(:method_name) => ext } }.reduce(&:merge)
-    end
+    # Load vendor extensions in for handling. This is a noop because vendor
+    # extensions weren't introduced until version 3 of the SFTP protocol.
+    def load_extensions(extensions); end
 
     # Attept to parse the given packet. If the packet is of an unsupported
     # type, an exception will be raised. Returns the parsed data as a hash
@@ -35,16 +35,11 @@ module Net; module SFTP; module Protocol
       when FXP_DATA   then parse_data_packet(packet)
       when FXP_NAME   then parse_name_packet(packet)
       when FXP_ATTRS  then parse_attrs_packet(packet)
-      when FXP_EXTENDED_REPLY then parse_extended_packet(request.type, packet)
       else raise NotImplementedError, "unknown packet type: #{packet.type}"
       end
     end
 
     private
-
-    def parse_extended_packet(type, packet)
-      @extensions.fetch(type).fetch(:protocol_parse_extension_packet).call(packet)
-    end
 
     # Send a new packet of the given type, and with the given data arguments.
     # A new request identifier will be allocated to this request, and will

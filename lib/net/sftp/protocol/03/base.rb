@@ -30,6 +30,24 @@ module Net; module SFTP; module Protocol; module V03
       send_request(FXP_SYMLINK, :string, path, :string, target)
     end
 
+    # Support for SFTP v3+ vendor extensioning.
+    def load_extensions(extensions)
+      @extensions = extensions.map { |ext| { ext.fetch(:method_name) => ext } }.reduce(&:merge)
+    end
+
+    def parse(request, packet)
+      if packet.type == FXP_EXTENDED_REPLY
+        parse_extended_packet(request.type, packet)
+      else
+        super(request, packet)
+      end
+    end
+
+    private
+
+    def parse_extended_packet(type, packet)
+      @extensions.fetch(type).fetch(:protocol_parse_extension_packet).call(packet)
+    end
   end
 
 end; end; end; end
